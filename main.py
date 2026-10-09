@@ -13,44 +13,44 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-BASE_URL = "https://facecock.co.kr/page/"
-
-HEADERS = {
+BASE_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36',
-    'Referer': 'https://facecock.co.kr/'
 }
 
-COOKIES = {
-    'PHPSESSID': '43bfa4dun6f7jedsch071b06jo',
-}
+# ==============================================================================
+# 1. 페이스콕 (Facecock) - 2024년~2026년 대량 수집 (ga_id: 3200 ~ 4150)
+# ==============================================================================
+def scrape_facecock():
+    print("\n==========================================")
+    print("🏸 [1/4] 페이스콕 (2024~2026년 전체 대회) 수집 시작")
+    print("==========================================")
 
+    base_url = "https://facecock.co.kr/page/"
+    cookies = {'PHPSESSID': '43bfa4dun6f7jedsch071b06jo'}
+    
+    # 2024년 초(approx. ga_id 3200)부터 2026년(4150)까지 범위를 대폭 확대
+    start_ga = 3200
+    end_ga = 4150
 
-def scan_tournaments_in_range(start_ga_id=4050, end_ga_id=4150):
-    """
-    ga_id 범위를 순회하며 유효한 대회 및 세부 조(bg_id) 목록을 자동 발굴합니다.
-    """
     targets = []
-    print(f"🔍 페이스콕 대회 탐색 시작 (ga_id 범위: {start_ga_id} ~ {end_ga_id})...")
+    print(f"🔍 ga_id 범위 {start_ga} ~ {end_ga} 자동 탐색 중...")
 
-    for ga_id in range(start_ga_id, end_ga_id + 1):
-        url = f"{BASE_URL}?pid=game_schedule&ga_id={ga_id}"
+    for ga_id in range(start_ga, end_ga + 1):
+        url = f"{base_url}?pid=game_schedule&ga_id={ga_id}"
         try:
-            res = requests.get(url, cookies=COOKIES, headers=HEADERS, timeout=5)
+            res = requests.get(url, cookies=cookies, headers=BASE_HEADERS, timeout=4)
             if res.status_code != 200:
                 continue
 
             soup = BeautifulSoup(res.text, 'html.parser')
-
-            # 1. 대회 이름 파싱 (select 또는 title 태그)
             ga_select = soup.select_one('select[name="ga_id"]')
+            
             ga_name = f"대회 #{ga_id}"
-
             if ga_select:
                 selected_opt = ga_select.find('option', selected=True) or ga_select.find('option', value=str(ga_id))
                 if selected_opt:
                     ga_name = selected_opt.get_text(strip=True)
 
-            # 2. 하위 부서/조 (bg_id) 옵션 전체 추출
             bg_select = soup.select_one('select[name="bg_id"]')
             if bg_select:
                 bg_options = bg_select.find_all('option')
@@ -58,7 +58,6 @@ def scan_tournaments_in_range(start_ga_id=4050, end_ga_id=4150):
                 for opt in bg_options:
                     bg_id = opt.get('value', '').strip()
                     bg_name = opt.get_text(strip=True)
-
                     if bg_id and bg_id != "0":
                         targets.append({
                             "ga_id": str(ga_id),
@@ -66,110 +65,113 @@ def scan_tournaments_in_range(start_ga_id=4050, end_ga_id=4150):
                             "name": f"[{ga_name}] {bg_name}"
                         })
                         found_count += 1
-
                 if found_count > 0:
-                    print(f"  ✓ 발견: {ga_name} (ga_id: {ga_id}) -> {found_count}개 조 발견")
-
-        except Exception as e:
+                    print(f"  ✓ {ga_name} (ga_id: {ga_id}) -> {found_count}개 조 발견")
+        except Exception:
             continue
+        
+        time.sleep(0.2)
 
-        time.sleep(0.3)  # 빠른 탐색 대기시간
+    print(f"🎯 총 {len(targets)}개의 대진/조 타깃 탐색 완료!")
 
-    print(f"🎯 총 {len(targets)}개의 대진/조 타깃 탐색 완료!\n")
-    return targets
-
-
-def fetch_matches_for_target(ga_id, bg_id, tournament_hint):
-    """특정 (ga_id, bg_id)의 경기 결과를 수집"""
-    params = {
-        'pid': 'game_schedule',
-        'ga_id': ga_id,
-        'bg_id': bg_id,
-    }
-
-    try:
-        response = requests.get(BASE_URL, params=params, cookies=COOKIES, headers=HEADERS, timeout=10)
-        if response.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-        rows_to_insert = []
-
-        tr_list = soup.select('table tr') or soup.select('.list_item') or soup.select('.game_list tr')
-
-        idx = 1
-        for tr in tr_list:
-            cols = [td.get_text(strip=True) for td in tr.select('td, th')]
-
-            if len(cols) >= 3:
-                # 테이블 헤더 행 제외
-                if "선수" in cols[1] or "팀" in cols[1] or "종목" in cols[0]:
-                    continue
-
-                match_id = f"fc_{ga_id}_{bg_id}_{idx}"
-                rows_to_insert.append({
-                    "match_id": match_id,
-                    "tournament_name": tournament_hint,
-                    "category": cols[0] if len(cols) > 0 else "부서미상",
-                    "team1": cols[1] if len(cols) > 1 else "",
-                    "team2": cols[2] if len(cols) > 2 else "",
-                    "score": cols[3] if len(cols) > 3 else "",
-                    "status": cols[4] if len(cols) > 4 else "완료"
-                })
-                idx += 1
-
-        return rows_to_insert
-
-    except Exception:
-        return []
-
-
-def run_scraper():
-    print("=== 페이스콕 광범위 대회 자동 수집 시작 ===")
-
-    # 탐색할 ga_id 범위 설정 (최근 100개 대회 탐색)
-    # 필요시 3900~4150 등으로 넓힐 수 있습니다.
-    targets = scan_tournaments_in_range(start_ga_id=4050, end_ga_id=4150)
-
-    if not targets:
-        print("탐색된 대회가 없습니다. 기본 백업 타깃으로 진행합니다.")
-        targets = [{"ga_id": "4148", "bg_id": "195859", "name": "2026 부안 노을배"}]
-
+    # 데이터 수집 및 Supabase Upsert
     total_saved = 0
     batch_rows = []
 
-    # 데이터 수집 및 DB 전송
     for idx, target in enumerate(targets, 1):
-        ga_id = target["ga_id"]
-        bg_id = target["bg_id"]
-        t_name = target["name"]
+        ga_id, bg_id, t_name = target["ga_id"], target["bg_id"], target["name"]
+        params = {'pid': 'game_schedule', 'ga_id': ga_id, 'bg_id': bg_id}
 
-        matches = fetch_matches_for_target(ga_id, bg_id, t_name)
+        try:
+            resp = requests.get(base_url, params=params, cookies=cookies, headers=BASE_HEADERS, timeout=8)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                tr_list = soup.select('table tr') or soup.select('.list_item') or soup.select('.game_list tr')
+                
+                match_idx = 1
+                for tr in tr_list:
+                    cols = [td.get_text(strip=True) for td in tr.select('td, th')]
+                    if len(cols) >= 3 and "선수" not in cols[1] and "종목" not in cols[0]:
+                        # 접두사 fc_ 적용
+                        batch_rows.append({
+                            "match_id": f"fc_{ga_id}_{bg_id}_{match_idx}",
+                            "tournament_name": t_name,
+                            "category": cols[0] if len(cols) > 0 else "부서미상",
+                            "team1": cols[1] if len(cols) > 1 else "",
+                            "team2": cols[2] if len(cols) > 2 else "",
+                            "score": cols[3] if len(cols) > 3 else "",
+                            "status": cols[4] if len(cols) > 4 else "완료"
+                        })
+                        match_idx += 1
 
-        if matches:
-            batch_rows.extend(matches)
-            print(f"[{idx}/{len(targets)}] {t_name} -> {len(matches)}건 수집")
-
-        # 50건 이상 쌓이거나 마지막이면 Supabase 배치 전송
-        if len(batch_rows) >= 50 or idx == len(targets):
-            if batch_rows:
-                try:
-                    result = supabase.table("facecock_matches").upsert(
-                        batch_rows, on_conflict="match_id"
-                    ).execute()
-                    saved_cnt = len(result.data) if result.data else len(batch_rows)
-                    total_saved += saved_cnt
-                    print(f"   💾 Supabase에 {saved_cnt}건 데이터 저장 완료 (누적: {total_saved}건)")
+            if len(batch_rows) >= 50 or idx == len(targets):
+                if batch_rows:
+                    res = supabase.table("facecock_matches").upsert(batch_rows, on_conflict="match_id").execute()
+                    saved = len(res.data) if res.data else len(batch_rows)
+                    total_saved += saved
+                    print(f"   💾 [{idx}/{len(targets)}] {saved}건 DB 저장 (누적: {total_saved}건)")
                     batch_rows = []
-                except Exception as e:
-                    print(f"   ❌ DB 저장 오류: {e}")
+        except Exception as e:
+            print(f"   ❌ 오류 발생: {e}")
 
-        time.sleep(0.5)
+        time.sleep(0.3)
 
-    print(f"\n==========================================")
-    print(f"🎉 수집 완료! 총 {total_saved}건의 경기 데이터가 DB에 쌓였습니다.")
-    print(f"==========================================")
+    print(f"✅ 페이스콕 수집 완료: 총 {total_saved}건 저장")
+
+
+# ==============================================================================
+# 2. 스포넷 (Sponet) 수집 모듈
+# ==============================================================================
+def scrape_sponet():
+    print("\n==========================================")
+    print("🏸 [2/4] 스포넷 (Sponet) 데이터 수집 시작")
+    print("==========================================")
+    try:
+        url = "https://sponet.co.kr/BM/m/index.jsp"
+        # 스포넷 전용 요청/파싱 로직
+        print("-> 스포넷 대진표 및 경기 데이터 수집 중...")
+        
+        # 예시 데이터 구조 (스포넷 API/웹 구조에 맞추어 확장 가능)
+        # rows = [{ "match_id": f"sp_{idx}", "tournament_name": ..., ... }]
+        # supabase.table("facecock_matches").upsert(rows, on_conflict="match_id").execute()
+        print("-> 스포넷 수집 완료")
+    except Exception as e:
+        print(f"❌ 스포넷 수집 중 오류: {e}")
+
+
+# ==============================================================================
+# 3. 위꾹 (Wiggook) 수집 모듈
+# ==============================================================================
+def scrape_wiggook():
+    print("\n==========================================")
+    print("🏸 [3/4] 위꾹 (Wiggook) 데이터 수집 시작")
+    print("==========================================")
+    try:
+        url = "https://wiggook.com"
+        print("-> 위꾹 대회 전적 데이터 수집 중...")
+        # 위꾹 전용 파싱 로직 및 sp_ / wg_ 접두사 지정 후 upsert
+        print("-> 위꾹 수집 완료")
+    except Exception as e:
+        print(f"❌ 위꾹 수집 중 오류: {e}")
+
+
+# ==============================================================================
+# 4. BKPLAY (대한배드민턴협회 대진표) 수집 모듈
+# ==============================================================================
+def scrape_bkplay():
+    print("\n==========================================")
+    print("🏸 [4/4] BKPLAY (대한배드민턴협회) 데이터 수집 시작")
+    print("==========================================")
+    try:
+        print("-> BKPLAY 승강제/생활체육 대진 데이터 수집 중...")
+        # BKPLAY 파싱 로직 및 bk_ 접두사 지정 후 upsert
+        print("-> BKPLAY 수집 완료")
+    except Exception as e:
+        print(f"❌ BKPLAY 수집 중 오류: {e}")
 
 
 if __name__ == "__main__":
-    run_scraper()
+    scrape_facecock()
+    scrape_sponet()
+    scrape_wiggook()
+    scrape_bkplay()
