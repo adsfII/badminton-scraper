@@ -2,21 +2,21 @@ name: Badminton Scraper
 
 on:
   schedule:
-    # 매일 한국시간 00시 (UTC 15시) 자동 실행
     - cron: '0 15 * * *'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5      # v4 -> v5 업그레이드
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6  # v5 -> v6 업그레이드
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - run: pip install supabase requests
+      # beautifulsoup4 패키지 추가 설치
+      - run: pip install supabase requests beautifulsoup4
 
       - name: Run Python Scraper
         env:
